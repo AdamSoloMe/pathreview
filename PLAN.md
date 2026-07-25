@@ -1,86 +1,136 @@
-# Plan: Fix #147 — Resume section detection fails on text with leading whitespace
+## Solution plan
 
-**Issue:** https://github.com/ascherj/pathreview/issues/147
-**Branch:** `fix/147-resume-parser-whitespace`
-**Tier:** 1 (self-contained, localized to `ingestion/parsers/resume_parser.py`)
+**Issue:** Resume section detection fails on text with leading whitespace — https://github.com/ascherj/pathreview/issues/147
 
-## Problem Summary
+### Understand
 
-`ResumeParser` detects resume sections (Experience, Education, Skills, etc.) by
-matching section-header regex patterns anchored to the start of a line. Text
-extracted from PDFs — and any markdown resume with indented body text —
-commonly preserves leading whitespace, so a line like `"    Education:"`
-never matches a pattern anchored at `^` or right after `\n`. The result is
-`detected_sections` comes back empty even when the resume clearly has
-sections, silently degrading the ingestion pipeline's understanding of the
-document.
+**Root cause:** `ResumeParser._detect_sections()` (in `ingestion/parsers/resume_parser.py`)
+builds four regex patterns per known section header, and every one of them anchors
+directly at the start of a line (`^header`) or right after a newline (`\nheader`), with
+no allowance for leading whitespace:
 
-**Before:** parsing indented resume text returns `metadata["detected_sections"] == []`.
-**After:** the same text returns the correct detected sections (e.g. `["Education", "Skills"]`), regardless of leading indentation.
+```python
+patterns = [
+    rf"^{re.escape(section)}\s*$",
+    rf"^{re.escape(section)}\s*[:|-]",
+    rf"\n{re.escape(section)}\s*$",
+    rf"\n{re.escape(section)}\s*[:|-]",
+]
+```
 
-## Root Cause
+Text extracted from PDFs, and any markdown resume with indented body text (the norm
+for both), commonly preserves leading whitespace. A line like `"    Education:"` never
+matches `^Education` or `\nEducation`, even though a human reading the same text would
+immediately recognize it as a section header.
 
-Confirmed by reading `ingestion/parsers/resume_parser.py` and running the
-existing test suite locally (`pytest tests/unit/test_resume_parser.py -v`),
-which currently fails **5** tests, not just the 3 named in the issue:
+The identical anchoring mistake also lives in `_strip_markdown()`'s header-stripping
+regex (`r"^#+\s+"`, `re.MULTILINE`) — an indented `"    # Header"` line is left
+untouched. I found this myself while reproducing the issue; it's why the existing test
+suite fails **6** tests locally, not just the 3 the issue names (see Map below).
 
-- `test_parse_single_column_resume_text`
-- `test_parse_resume_no_work_experience`
-- `test_detect_sections`
-- `test_parse_markdown_resume` *(not mentioned in the issue)*
-- `test_strip_markdown_syntax` *(not mentioned in the issue)*
+**Expected vs. actual behavior:**
+- *Expected:* `ResumeParser()._detect_sections("    Education:\n    Skills: Python")`
+  returns `["Education", "Skills"]`.
+- *Actual (today):* the same call returns `[]`.
 
-The root cause is the same regex-anchoring mistake in **two places**:
+**Blast radius (why this is worth fixing but isn't an emergency):** I traced
+`detected_sections` downstream via `grep -rn "detected_sections"` across the non-test
+codebase. It currently only reaches a `structlog` info line in
+`ingestion/pipeline.py::ingest_resume` — it is not read by `StrategySelector.chunk()`
+(branches only on `source_type`) and is not persisted by `_record_ingested_source`
+(stores only `chunk_count`). So today's visible damage is silently-wrong
+ingestion metadata/logs, not a broken review — but it's exactly the signal a future
+feature (section-aware chunking, resume completeness scoring) would reasonably build
+on, so it's worth fixing correctly now.
 
-1. `_detect_sections()` builds 4 pattern templates per section header:
-   ```python
-   patterns = [
-       rf"^{re.escape(section)}\s*$",
-       rf"^{re.escape(section)}\s*[:|-]",
-       rf"\n{re.escape(section)}\s*$",
-       rf"\n{re.escape(section)}\s*[:|-]",
-   ]
-   ```
-   None of these allow whitespace between the anchor (`^` / `\n`) and the
-   section keyword, so an indented header is never matched.
+### Map
 
-2. `_strip_markdown()` has the identical bug in its header-stripping regex:
-   ```python
-   text = re.sub(r"^#+\s+", "", content, flags=re.MULTILINE)
-   ```
-   An indented `"    # Header"` line is left untouched, which is why
-   `test_strip_markdown_syntax` and `test_parse_markdown_resume` also fail —
-   markdown headers survive stripping when indented.
+Files/functions involved:
+- `ingestion/parsers/resume_parser.py`
+  - `ResumeParser._detect_sections()` — the four pattern templates need their anchors
+    relaxed.
+  - `ResumeParser._strip_markdown()` — the header-stripping regex has the same bug.
+- `tests/unit/test_resume_parser.py`
+  - Already contains 5 tests that fail today because of this bug:
+    `test_parse_single_column_resume_text`, `test_parse_resume_no_work_experience`,
+    `test_detect_sections`, `test_parse_markdown_resume`, `test_strip_markdown_syntax`.
+  - I added a 6th, `test_detect_sections_with_leading_whitespace`, as a minimal,
+    isolated reproduction of the exact issue scenario (committed separately from this
+    plan — see JOURNAL.md Week 8 entry for the commit link).
+- No other files are involved. `grep -rn "_detect_sections\|_strip_markdown"` across
+  the repo (excluding tests) shows both methods are only called from within
+  `ResumeParser` itself (`_parse_pdf` and `_parse_markdown`) — no other class touches
+  them directly.
 
-## Proposed Fix
+### Plan
 
-Allow optional leading whitespace at each anchor point in both places,
-rather than changing the anchors' semantics:
+1. In `_detect_sections()`, change the anchor `^` to `^\s*` and `\n` to `\n\s*` in all
+   four pattern templates, so a header can be preceded by leading whitespace on its
+   line.
+2. In `_strip_markdown()`, change `r"^#+\s+"` to `r"^\s*#+\s+"` so indented markdown
+   headers are stripped the same as unindented ones.
+3. Run `pytest tests/unit/test_resume_parser.py -v` and confirm all 6 currently-failing
+   tests (the 5 pre-existing ones plus my new reproduction test) now pass, with zero
+   regressions in the 5 tests that already pass today.
+4. Run `make test-unit` (full unit suite) to confirm no other suite depends on the old,
+   narrower matching behavior.
+5. Update `PLAN.md`/`JOURNAL.md` to reflect the fix once implemented, and open the PR
+   referencing issue #147.
 
-- `_detect_sections()`: change `^` → `^\s*` and `\n` → `\n\s*` in all 4
-  pattern templates.
-- `_strip_markdown()`: change `r"^#+\s+"` → `r"^\s*#+\s+"`.
+### Inputs & outputs
 
-This is a minimal, localized change — no new dependencies, no changes to
-`ParseResult`, `BaseParser`, or the pipeline that calls `ResumeParser`.
+- **Input:** raw resume text (`str`) passed into `_detect_sections(text)`, or markdown
+  content (`str`) passed into `_strip_markdown(content)`. In practice this text
+  originates either from `PdfReader.extract_text()` (PDF path) or directly from a
+  markdown string (`_parse_markdown`), both of which may contain arbitrary leading
+  whitespace per line.
+- **Output:** `_detect_sections()` returns `list[str]` of detected section names
+  (title-cased); `_strip_markdown()` returns the input `str` with markdown syntax
+  removed. After the fix, both functions produce correct output regardless of leading
+  whitespace on the relevant lines, and produce *identical* output to today for input
+  that has no leading whitespace (the fix only adds matches, it doesn't remove any).
 
-## Test Plan
+### Risks & unknowns
 
-- The 5 currently-failing tests above should pass unmodified once the fix
-  lands (they already encode the expected behavior).
-- Add one new explicit regression test for the exact scenario in the issue
-  (indented plain-text resume, e.g. leading 4-space indentation) to
-  `tests/unit/test_resume_parser.py`, asserting `detected_sections` is
-  non-empty and contains the expected section names.
-- Run full unit suite (`make test-unit`) to confirm no regressions elsewhere
-  (e.g. `test_readme_parser.py` shares no code path with this fix, but other
-  resume-parser tests should be re-checked for anchor-sensitivity).
+- **Risk — over-broad matching:** widening `^` to `^\s*` could in theory make a pattern
+  match something it shouldn't (e.g. a section keyword appearing mid-sentence with
+  incidental leading whitespace from something other than a header). Mitigated by the
+  fact that the pattern still requires the header word to be immediately preceded only
+  by whitespace back to the line start — it cannot match a header that appears after
+  other non-whitespace text on the same line.
+- **Risk — regression in already-passing tests:** need to re-verify the currently
+  5-passing tests in `tests/unit/test_resume_parser.py` (e.g.
+  `test_parse_multipage_pdf`, `test_pdf_parsing_error_handling`,
+  `test_parse_preserves_text_content`) still pass unchanged after the fix, since they
+  exercise the same two methods indirectly.
+- **Unknown — real-world PDF extraction quirks:** `pypdf`'s `extract_text()` can
+  produce unusual whitespace/line-break patterns beyond simple leading spaces (e.g.
+  tabs, non-breaking spaces, or multi-column layouts that interleave text). `\s*`
+  covers spaces/tabs/newlines but I haven't tested against a real multi-column PDF
+  resume — flagging this as something to sanity-check manually with a sample PDF
+  before considering the fix complete, not just the unit tests.
+- **Unknown — PR #178:** another student opened PR #178 against the same issue with a
+  similar regex-anchor fix. It's still open/unmerged as of my Week 7 check. Not a
+  blocker for my own submission, but worth a quick recheck before I open my PR in case
+  it merged first and the file has since changed upstream.
 
-## Risks / Scope Notes
+### Edge cases
 
-- Widening the anchor to `\s*` is safe because it only *adds* matches for
-  previously-unmatched indented text — it cannot cause a previously-matching
-  unindented line to stop matching.
-- Scope is confirmed to be exactly these two methods in one file; no other
-  callers of `_detect_sections()` or `_strip_markdown()` exist outside this
-  class.
+- Leading whitespace of varying width (2 spaces, 4 spaces, a tab) before a header —
+  `\s*` handles all of these since it matches any whitespace character, not a fixed
+  count.
+- A section header with **no** leading whitespace (today's working case) — must
+  continue to match exactly as before; `\s*` matches zero-or-more, so this is
+  unaffected.
+- Blank lines or lines containing only whitespace between sections — should not be
+  mistaken for a header themselves; the fix only touches the anchor, not the header-word
+  match itself, so this shouldn't change.
+- A section keyword appearing as part of a longer word or sentence (e.g. "professional
+  experience working with clients") — should still only match when the keyword is at
+  the start of a line (mod leading whitespace) followed by `\s*$` or `\s*[:|-]`, not
+  mid-sentence; this behavior is unchanged by the fix and should be covered by
+  re-running the existing non-header-only tests.
+- Indented markdown headers of different levels (`#`, `##`, `###`) — `_strip_markdown`'s
+  `^\s*#+\s+` should strip all of them regardless of indentation or header depth.
+- Empty input string / resume text with no section headers at all — should continue to
+  return `[]` / unmodified text, not error.
