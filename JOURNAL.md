@@ -108,3 +108,29 @@ matching exactly as before — the change can only add matches, never remove one
 - *Blockers:* none. The issue references no "blocked by #X" and PR #178 being open
   (not merged, not closed) doesn't prevent me from independently implementing and
   submitting my own fix.
+
+---
+
+## Week 8 — Reproduction & solution planning
+
+**Reproduction commit link:** https://github.com/AdamSoloMe/pathreview/commit/1f416ef
+
+**Reproduction summary:**
+Added an isolated test, `test_detect_sections_with_leading_whitespace`, that calls
+`ResumeParser()._detect_sections("    Education:\n    Skills: Python")` and asserts it
+returns `["Education", "Skills"]`. Running `pytest tests/unit/test_resume_parser.py -v`
+confirms it currently returns `[]` instead, alongside the 5 pre-existing failures named
+in the issue (6 failed / 5 passed total) — reliably reproducing the bug on demand
+without needing a real PDF or markdown fixture.
+
+**PLAN.md link:** https://github.com/AdamSoloMe/pathreview/blob/fix/147-resume-parser-whitespace/PLAN.md
+
+**Walkthrough video (recommended):** (not recorded this week)
+
+**Blockers or open questions:**
+- Haven't sanity-checked the fix against a real multi-column PDF resume yet — only
+  against plain-text/markdown fixtures with simple space indentation. Flagged in
+  PLAN.md's Risks & unknowns; plan to test with a sample PDF before considering the
+  Week 9 fix complete.
+- Need to recheck PR #178's status before opening my own PR, in case it merged first
+  and `resume_parser.py` has since changed upstream.
