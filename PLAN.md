@@ -157,3 +157,33 @@ Steps 1–4 are complete as of commit `ee9ffeb`:
   `detected_sections` on this real PDF returned `[]`; post-fix, it correctly returns
   `['Experience', 'Skills', 'Education', 'Projects']` — all four headers across both
   columns. Confirms the fix generalizes beyond the plain-text/markdown fixtures.
+
+### Mentor review: `\s*` vs `[ \t]*`
+
+A review pass on the draft PR caught that `\s` matches newlines, not just
+same-line spaces/tabs — broader than the issue actually calls for ("leading
+whitespace" on the header's own line). Verified the real impact:
+
+- **`_strip_markdown()`:** confirmed to be a genuine regression. `re.sub` consumes
+  and deletes whatever `\s*` matched, so a blank line separating a paragraph from
+  the next header was silently swallowed — `"Some intro text.\n\n# Header"` stripped
+  to `"Some intro text.\nHeader"` instead of preserving the blank line. This isn't
+  cosmetic: `_strip_markdown()`'s output *is* the parsed resume text (unlike
+  `detected_sections`, which only feeds a log line), so this would have altered
+  real ingested content for any markdown resume with normal header spacing.
+- **`_detect_sections()`:** re-examined and confirmed this one is *not* actually
+  affected the same way, despite first appearances. It uses `re.search` (no
+  consumption/deletion), and `^` in `re.MULTILINE` anchors at every line start —
+  so an unindented header on its own line always has a valid zero-width anchor
+  right there, regardless of how many blank lines precede it. `\s*` vs `[ \t]*`
+  is behaviorally identical here; changed it anyway for consistency with
+  `_strip_markdown()` and to not rely on that anchor subtlety going forward.
+
+**Fix:** swapped `\s*` for `[ \t]*` in both methods, so the anchor only reaches
+across same-line horizontal whitespace, never newlines. Added two tests:
+`test_detect_sections_with_blank_lines_before_header` (documents the anchor
+behavior is unaffected) and `test_strip_markdown_preserves_blank_line_before_header`
+(regression guard — fails against the `\s*` version, confirmed by testing both
+against `git show`'d versions of the file). All 13 tests in
+`test_resume_parser.py` pass; full suite is 48 failed / 383 passed (2 more passing
+than before, matching the 2 new tests; same 48 pre-existing unrelated failures).

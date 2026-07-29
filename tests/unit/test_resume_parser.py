@@ -160,6 +160,33 @@ class TestResumeParser:
 
         assert sorted(sections) == ["Education", "Skills"]
 
+    def test_detect_sections_with_blank_lines_before_header(self, parser: ResumeParser) -> None:
+        """A header preceded by blank lines (no same-line indentation) still detects.
+
+        `^` in MULTILINE mode anchors at every line start, so an unindented
+        header always has a zero-width anchor right at its own line
+        regardless of how many blank lines come before it — this holds
+        whether the pattern uses `\\s*` or `[ \\t]*`.
+        """
+        text = "Intro paragraph.\n\n\nEducation:\nBS CS"
+
+        sections = parser._detect_sections(text)
+
+        assert sections == ["Education"]
+
+    def test_strip_markdown_preserves_blank_line_before_header(self, parser: ResumeParser) -> None:
+        """`_strip_markdown()` must not swallow a blank line preceding a header.
+
+        Same `\\s*`-matches-newlines concern as above: using `\\s*` here would
+        silently delete the blank line separating a paragraph from the next
+        header, altering the parsed resume text itself (not just metadata).
+        """
+        content = "Some intro text.\n\n# Header\nBody text."
+
+        stripped = parser._strip_markdown(content)
+
+        assert stripped == "Some intro text.\n\nHeader\nBody text."
+
     def test_strip_markdown_syntax(self, parser: ResumeParser) -> None:
         """Test markdown syntax stripping."""
         markdown_text = """
