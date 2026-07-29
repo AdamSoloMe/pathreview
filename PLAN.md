@@ -148,3 +148,12 @@ Steps 1–4 are complete as of commit `ee9ffeb`:
 - `make check` (ruff/black/mypy): passes on the touched file. Also fixed a pre-existing
   `B904` lint error in `_parse_pdf`'s except clause (missing `raise ... from e`) since
   pre-commit lints the whole file and was blocking the commit otherwise.
+- **Real multi-column PDF sanity check (closes the "Unknown" above):** generated a
+  genuine two-column PDF with `reportlab` (left column headers indented 4 spaces,
+  right column headers indented 8 spaces, simulating column offset) and ran it through
+  the real `pypdf` extraction path — not mocked. `pypdf.extract_text()` extracts by
+  drawing order (whole left column, then whole right column; not interleaved
+  line-by-line), and both columns' headers keep their leading whitespace. Pre-fix,
+  `detected_sections` on this real PDF returned `[]`; post-fix, it correctly returns
+  `['Experience', 'Skills', 'Education', 'Projects']` — all four headers across both
+  columns. Confirms the fix generalizes beyond the plain-text/markdown fixtures.
