@@ -134,3 +134,31 @@ without needing a real PDF or markdown fixture.
   Week 9 fix complete.
 - Need to recheck PR #178's status before opening my own PR, in case it merged first
   and `resume_parser.py` has since changed upstream.
+
+---
+
+## Week 9 — Solution building & PR submission
+
+### Check-in 1 (mid-week)
+
+**Current progress:**
+Implemented the fix from PLAN.md (steps 1–2): relaxed the anchors in both
+`_detect_sections()`'s four regex patterns and `_strip_markdown()`'s header regex from
+`^`/`\n` to `^\s*`/`\n\s*`, so leading whitespace before a section header no longer
+prevents a match. Ran the verification steps from the plan (steps 3–4): all 11 tests in
+`tests/unit/test_resume_parser.py` now pass (was 6 failed / 5 passed), and the full
+`make test-unit` suite went from a 54-failed/375-passed baseline to 48 failed / 381
+passed — a clean 6-test improvement with zero new failures. Confirmed the 48 remaining
+failures are pre-existing and unrelated by diffing against the pre-fix commit with `git
+stash`. Also fixed a pre-existing `B904` ruff error in `_parse_pdf`'s except clause,
+which was otherwise blocking pre-commit from letting the real fix through. `make check`
+passes on the touched file. Committed as `ee9ffeb`.
+
+**Next steps:**
+Sanity-check the fix against a real multi-column PDF resume (flagged as an open
+unknown in PLAN.md's Risks section — only tested against plain-text/markdown fixtures
+so far). Recheck PR #178's status before opening my own PR. Open a draft PR and
+request peer/mentor review in Slack.
+
+**Blockers:**
+None.

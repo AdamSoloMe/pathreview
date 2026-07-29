@@ -134,3 +134,17 @@ Files/functions involved:
   `^\s*#+\s+` should strip all of them regardless of indentation or header depth.
 - Empty input string / resume text with no section headers at all — should continue to
   return `[]` / unmodified text, not error.
+
+### Status: Implemented
+
+Steps 1–4 are complete as of commit `ee9ffeb`:
+- `_detect_sections()`'s four patterns and `_strip_markdown()`'s header regex now use
+  `^\s*`/`\n\s*` anchors instead of bare `^`/`\n`.
+- `tests/unit/test_resume_parser.py`: all 11 tests pass (was 6 failed / 5 passed).
+- `make test-unit` (full suite): 48 failed / 381 passed, down from a 54-failed/375-passed
+  baseline — a clean 6-test improvement with zero new failures. The 48 remaining
+  failures are pre-existing and unrelated (bias detector, PII scrubber, review service,
+  etc. — confirmed identical on the pre-fix commit via `git stash`).
+- `make check` (ruff/black/mypy): passes on the touched file. Also fixed a pre-existing
+  `B904` lint error in `_parse_pdf`'s except clause (missing `raise ... from e`) since
+  pre-commit lints the whole file and was blocking the commit otherwise.
