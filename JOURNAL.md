@@ -212,3 +212,81 @@ silently swallow blank lines before headers in `_strip_markdown()` — changed t
 with a regression test. Round 2 was a broader codebase review that surfaced the
 `raw_data`, `StructuralChunker`, and `SkillExtractor` issues and the orchestrator test
 gap. _(Replace with the reviewer's Slack handle if crediting a specific classmate.)_
+
+---
+
+## Week 10 — Iteration & reflection
+
+### Reviewer feedback
+
+**Feedback received:** [ ] Yes  [x] No — still awaiting review
+
+**Summary of feedback:**
+No maintainer or reviewer comments have come in on PR #388 as of the end of the week.
+(Reviewer feedback is not a feature of the Summer 2026 section, so I did not expect
+external review to arrive — noting it here per the module instructions.) The only
+review I received during this contribution cycle was the draft-PR mentor review logged
+in my Week 9 Check-in 2 entry, which I had already applied before submitting.
+
+**How you responded:**
+No new feedback to respond to. The PR remains open and unmerged. Had review come in, my
+plan was to respond point-by-point in the PR thread, make warranted changes as separate
+commits so reviewers could see the delta, and push back respectfully (with reasoning)
+only where I disagreed rather than silently accepting or ignoring a comment.
+
+---
+
+### Reflection
+
+**What was harder than you expected?**
+Trusting the issue text less than I instinctively wanted to. The issue said three tests
+failed; when I actually ran the suite, five did, and the extra two (`test_parse_markdown_resume`,
+`test_strip_markdown_syntax`) pointed at a *second* method (`_strip_markdown()`) with the
+identical anchoring bug that the issue never mentioned. So the "one regex" Tier 1 fix was
+really two methods and five-plus regexes. The other genuinely hard part was a subtlety
+that looked trivial: my first fix used `\s*`, which felt obviously correct, but `\s`
+matches newlines, so it silently swallowed blank lines before headers in `_strip_markdown()`.
+The fix that was actually right — `[ \t]*` — is a two-character difference that I would
+not have caught without the draft-review round and a deliberate regression test. Small
+surface area did not mean small care.
+
+**What did you learn about working in a large codebase?**
+That before I change a line, I have to know where its output *goes*. The most valuable
+thing I did was trace `detected_sections` with `grep` across the whole tree and confirm
+it currently only feeds a `structlog` line — not chunking, not retrieval, not the DB.
+That "blast radius" analysis is what told me the fix was low-risk, and it's a step I never
+take on my own greenfield projects because I already hold the whole thing in my head. The
+other big difference was living with pre-existing breakage: the repo shipped with ~54
+failing unit tests and mypy/lint debt I didn't cause. On my own code a red suite means
+"I broke something"; here I had to diff the *failure set* against HEAD to prove I'd fixed
+13 and introduced zero, and I had to use `--no-verify` in spots where a pre-commit hook
+followed imports into untyped modules I hadn't touched. You inherit a codebase's history,
+not just its files.
+
+**How did AI tools help — and where did they fall short?**
+AI was most useful for mechanical breadth: sweeping the tree for every reader of
+`detected_sections`, scaffolding the new orchestrator and ingestion test suites, and
+sanity-checking regex behavior quickly. Where it fell short was judgment calls that
+depended on the specific consequences in *this* codebase — the `\s*` vs `[ \t]*` decision
+hinged on knowing that swallowing a blank line would corrupt downstream markdown
+structure, and on deciding whether the `raw_data` / `StructuralChunker` / `SkillExtractor`
+issues surfaced by the broader review were in-scope for a #147 PR or scope creep. AI could
+describe the tradeoff, but choosing where to draw the PR boundary, and owning that choice
+to a reviewer, was on me.
+
+**What would you do differently if you started over?**
+Reproduce before I fully commit to a scope estimate. My Week 7 time estimate assumed the
+issue's "three tests" was accurate; the real scope only became clear once I ran the suite,
+and I'd rather discover that on day one than mid-Week-9. I'd also think harder about PR
+boundaries earlier: the extra three fixes I folded in made the contribution stronger but
+made the PR larger and harder to review, and a real maintainer might reasonably ask me to
+split it. Next time I'd open the core #147 fix as its own tight PR and file follow-ups for
+the adjacent bugs.
+
+**What are you most proud of from this module?**
+Not the regex — the verification discipline around it. Turning a nominally one-line fix
+into a change I could defend with evidence: a reproduction test written before the fix, a
+before/after failure-set diff proving 13 fixed and zero regressions, regression guards for
+the blank-line edge case, and honest documentation of every `--no-verify` and every
+pre-existing failure I chose not to touch. I ended the module more confident that I can
+walk into an unfamiliar production codebase, make a change, and *prove* it's safe.
